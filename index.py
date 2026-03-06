@@ -66,14 +66,35 @@ def fetch_2026_data():
     for round_num in range(1, 25): 
         try:
             session = fastf1.get_session(2026, round_num, 'R')
-            session.load(telemetry=False, weather=False, messages=False)
+            session.load(telemetry=True, weather=True, messages=True)
+            
+            banderas_rojas = len(session.track_status[session.track_status['Message'].str.contains('Red', na=False)])
+            
             for _, row in session.results.iterrows():
+                piloto = row['Abbreviation']
+                
+                try:
+                    laps_piloto = session.laps.pick_driver(piloto)
+                    paradas_boxes = len(laps_piloto[laps_piloto['PitOutTime'].notnull()])
+                except:
+                    paradas_boxes = 0
+                    
+                try:
+                    vuelta_rapida = laps_piloto.pick_fastest()
+                    telemetria = vuelta_rapida.get_car_data()
+                    vel_maxima = telemetria['Speed'].max()
+                except:
+                    vel_maxima = 0
+                
                 all_results.append({
                     'year': 2026, 
-                    'pilot': row['Abbreviation'],
+                    'pilot': piloto,
                     'grid': row['GridPosition'], 
                     'finish': row['Position'],
-                    'circuit': session.event['EventName']
+                    'circuit': session.event['EventName'],
+                    'pit_stops': paradas_boxes,
+                    'max_speed': vel_maxima,
+                    'red_flags': banderas_rojas
                 })
         except Exception:
             break 
@@ -93,6 +114,11 @@ if not df_base.empty:
     df = df.dropna(subset=['finish'])
     df['is_podium'] = df['finish'].apply(lambda x: 1 if x <= 3 else 0)
     
+    for col in ['pit_stops', 'max_speed', 'red_flags']:
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = df[col].fillna(0)
+    
     pilotos_base = df_base['pilot'].unique() if not df_base.empty else []
     rookies_list = [p for p in PILOTOS_2026.keys() if p not in pilotos_base]
 
@@ -108,50 +134,47 @@ if not df_base.empty:
     df['pilot_id'] = le_pilot.transform(df['pilot'].astype(str))
     df['circuit_id'] = le_circuit.transform(df['circuit'].astype(str))
     
-    X = df[['grid', 'pilot_id', 'circuit_id', 'year']]
+    X = df[['grid', 'pilot_id', 'circuit_id', 'year', 'pit_stops', 'max_speed', 'red_flags']]
     y_class = df['is_podium'] 
     y_reg = df['finish']      
 
-    # --- ENTRENAMIENTO DE LOS 3 MODELOS SIMULTÁNEAMENTE ---
     modelos_class = {
         "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
         "Gradient Boosting": GradientBoostingClassifier(n_estimators=100, random_state=42),
-        "Lineal / Logística": LogisticRegression(max_iter=1000)
+        "Lineal / Logistica": LogisticRegression(max_iter=1000)
     }
     
     modelos_reg = {
         "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
         "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, random_state=42),
-        "Lineal / Logística": LinearRegression()
+        "Lineal / Logistica": LinearRegression()
     }
 
     for name in modelos_class.keys():
         modelos_class[name].fit(X, y_class)
         modelos_reg[name].fit(X, y_reg)
 
-    # --- SIDEBAR: ESTATUS Y SELECTOR DE CIRCUITO ---
     st.sidebar.subheader("📅 Última actualización")
     if not df_2026.empty:
         last_race = df_2026.iloc[-1]['circuit']
-        st.sidebar.success(f"**Datos al día.**\n🏁 {last_race} (2026)")
+        st.sidebar.success(f"Datos al día.\n🏁 {last_race} (2026)")
     else:
         last_year = df_base['year'].max()
         try:
             last_race = df_base[df_base['year'] == last_year].iloc[-1]['circuit']
         except IndexError:
             last_race = "Desconocida"
-        st.sidebar.info(f"**Esperando inicio 2026.**\n🏁 {last_race} ({last_year})")
+        st.sidebar.info(f"Esperando inicio 2026.\n🏁 {last_race} ({last_year})")
 
     st.sidebar.markdown("---")
     selected_circuit = st.sidebar.selectbox("Selecciona la próxima carrera:", CALENDARIO_2026)
     c_id = le_circuit.transform([selected_circuit])[0]
 
-    # --- COMPARATIVA DE 3 COLUMNAS ---
     st.subheader(f"📊 Comparativa de Predicciones - {selected_circuit}")
     
     col1, col2, col3 = st.columns(3)
     columnas_UI = [col1, col2, col3]
-    nombres_modelos = ["Random Forest", "Gradient Boosting", "Lineal / Logística"]
+    nombres_modelos = ["Random Forest", "Gradient Boosting", "Lineal / Logistica"]
 
     for idx, modelo_nombre in enumerate(nombres_modelos):
         with columnas_UI[idx]:
@@ -161,11 +184,15 @@ if not df_base.empty:
             for pilot_abbr, info in PILOTOS_2026.items():
                 p_id = le_pilot.transform([pilot_abbr])[0]
                 
-                historial_piloto = df[df['pilot'] == pilot_abbr]['grid']
-                avg_grid = historial_piloto.mean() if not historial_piloto.empty else 15.0
+                historial_piloto = df[df['pilot'] == pilot_abbr]
+                avg_grid = historial_piloto['grid'].mean() if not historial_piloto.empty else 15.0
+                avg_pit = historial_piloto['pit_stops'].mean() if not historial_piloto.empty else 1.0
+                avg_speed = historial_piloto['max_speed'].mean() if not historial_piloto.empty else 300.0
+                avg_red = historial_piloto['red_flags'].mean() if not historial_piloto.empty else 0.0
                 
-                prob = modelos_class[modelo_nombre].predict_proba([[avg_grid, p_id, c_id, 2026]])[0][1]
-                pos_pred = modelos_reg[modelo_nombre].predict([[avg_grid, p_id, c_id, 2026]])[0]
+                features = [[avg_grid, p_id, c_id, 2026, avg_pit, avg_speed, avg_red]]
+                prob = modelos_class[modelo_nombre].predict_proba(features)[0][1]
+                pos_pred = modelos_reg[modelo_nombre].predict(features)[0]
                 
                 nombre_display = f"{info['nombre']} 🔰" if pilot_abbr in rookies_list else info['nombre']
                 
@@ -193,7 +220,7 @@ if not df_base.empty:
                     importances = importances / suma_importancias
 
             fig, ax = plt.subplots(figsize=(4, 3))
-            variables = ['Grid', 'Piloto', 'Circuito', 'Año']
+            variables = ['Grid', 'Piloto', 'Circuito', 'Año', 'Pits', 'Vel. Max', 'Banderas Rojas']
             
             colors = ['#FF1801' if val == max(importances) else '#808080' for val in importances]
             
@@ -205,16 +232,12 @@ if not df_base.empty:
             plt.tight_layout()
             st.pyplot(fig)
 
-    # Guardado en segundo plano
     df.to_csv(ANALYZED_DATA_FILE, index=False)
 
-    # --- MOSTRAR DATAFRAME UTILIZADO ---
     st.markdown("---")
     st.subheader("🗂️ Dataset utilizado para el entrenamiento")
-    st.markdown("Estos son los datos crudos (históricos + 2026) que están alimentando los modelos ahora mismo:")
     st.dataframe(df, use_container_width=True)
 
-    # --- ZONA DE DESCARGA Y ACTUALIZACIÓN ---
     st.markdown("---")
     st.subheader("📥 Exportar y Actualizar Datos")
     
@@ -226,8 +249,7 @@ if not df_base.empty:
             label="Descargar Dataset Analizado Completo (CSV)",
             data=csv_data,
             file_name="f1_analyzed_data.csv",
-            mime="text/csv",
-            help="Descarga el dataset unificado con el historial y las nuevas carreras de 2026."
+            mime="text/csv"
         )
         
     with col_btn2:
