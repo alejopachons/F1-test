@@ -208,6 +208,12 @@ if not df_base.empty:
     # Guardado en segundo plano
     df.to_csv(ANALYZED_DATA_FILE, index=False)
 
+    # --- MOSTRAR DATAFRAME UTILIZADO ---
+    st.markdown("---")
+    st.subheader("🗂️ Dataset utilizado para el entrenamiento")
+    st.markdown("Estos son los datos crudos (históricos + 2026) que están alimentando los modelos ahora mismo:")
+    st.dataframe(df, use_container_width=True)
+
     # --- ZONA DE DESCARGA Y ACTUALIZACIÓN ---
     st.markdown("---")
     st.subheader("📥 Exportar y Actualizar Datos")
@@ -215,7 +221,6 @@ if not df_base.empty:
     col_btn1, col_btn2 = st.columns(2)
     
     with col_btn1:
-        # Preparamos el CSV actualizado para descarga
         csv_data = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Descargar Dataset Analizado Completo (CSV)",
