@@ -15,7 +15,6 @@ BASE_DATA_FILE = "f1_dataset_2022_2025.csv"
 ANALYZED_DATA_FILE = "f1_analyzed_data.csv"
 
 # --- 1. ALINEACIÓN OFICIAL 2026 ---
-# Mapeo de abreviatura oficial -> Nombre del piloto y su Equipo
 PILOTOS_2026 = {
     'GAS': {'nombre': 'Gasly', 'equipo': 'Alpine'},
     'COL': {'nombre': 'Colapinto', 'equipo': 'Alpine'},
@@ -64,7 +63,6 @@ def load_base_data():
 @st.cache_data
 def fetch_2026_data():
     all_results = []
-    # Busca dinámicamente las carreras de 2026
     for round_num in range(1, 25): 
         try:
             session = fastf1.get_session(2026, round_num, 'R')
@@ -95,18 +93,15 @@ if not df_base.empty:
     df = df.dropna(subset=['finish'])
     df['is_podium'] = df['finish'].apply(lambda x: 1 if x <= 3 else 0)
     
-    # --- IDENTIFICACIÓN DE ROOKIES ---
     pilotos_base = df_base['pilot'].unique() if not df_base.empty else []
     rookies_list = [p for p in PILOTOS_2026.keys() if p not in pilotos_base]
 
-    # --- ENCODERS ---
     le_pilot = LabelEncoder()
     le_circuit = LabelEncoder()
     
     todos_los_pilotos = pd.concat([df['pilot'], pd.Series(list(PILOTOS_2026.keys()))]).unique()
     le_pilot.fit(todos_los_pilotos)
     
-    # Aseguramos que el nuevo circuito "Madring" esté en el encoder aunque no haya historial
     todos_los_circuitos = pd.concat([df['circuit'], pd.Series(CALENDARIO_2026)]).unique()
     le_circuit.fit(todos_los_circuitos)
     
@@ -117,44 +112,48 @@ if not df_base.empty:
     y_class = df['is_podium'] 
     y_reg = df['finish']      
 
-    # --- SIDEBAR: CONFIGURACIÓN Y ESTATUS ---
-    st.sidebar.header("⚙️ Configuración del Modelo")
-    model_choice = st.sidebar.selectbox("Elige el modelo estadístico", ["Random Forest", "Gradient Boosting", "Lineal / Logística"])
+    # --- ENTRENAMIENTO DE LOS 3 MODELOS SIMULTÁNEAMENTE ---
+    modelos_class = {
+        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
+        "Gradient Boosting": GradientBoostingClassifier(n_estimators=100, random_state=42),
+        "Lineal / Logística": LogisticRegression(max_iter=1000)
+    }
     
-    st.sidebar.markdown("---")
+    modelos_reg = {
+        "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
+        "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, random_state=42),
+        "Lineal / Logística": LinearRegression()
+    }
+
+    # Entrenamos todos
+    for name in modelos_class.keys():
+        modelos_class[name].fit(X, y_class)
+        modelos_reg[name].fit(X, y_reg)
+
+    # --- SIDEBAR: ESTATUS Y SELECTOR ---
     st.sidebar.subheader("📅 Última actualización")
     if not df_2026.empty:
         last_race = df_2026.iloc[-1]['circuit']
-        st.sidebar.success(f"**Datos al día.**\n\nÚltima carrera procesada:\n🏁 {last_race} (2026)")
+        st.sidebar.success(f"**Datos al día.**\n🏁 {last_race} (2026)")
     else:
         last_year = df_base['year'].max()
-        # Manejo de error en caso de que el max year de la base no coincida
         try:
             last_race = df_base[df_base['year'] == last_year].iloc[-1]['circuit']
         except IndexError:
             last_race = "Desconocida"
-        st.sidebar.info(f"**Esperando inicio 2026.**\n\nEl GP de Australia aún no se corre o no hay datos cargados.\n\nÚltima carrera en base:\n🏁 {last_race} ({last_year})")
+        st.sidebar.info(f"**Esperando inicio 2026.**\n🏁 {last_race} ({last_year})")
 
-    # --- ENTRENAMIENTO ---
-    if model_choice == "Random Forest":
-        model_class = RandomForestClassifier(n_estimators=100, random_state=42)
-        model_reg = RandomForestRegressor(n_estimators=100, random_state=42)
-    elif model_choice == "Gradient Boosting":
-        model_class = GradientBoostingClassifier(n_estimators=100, random_state=42)
-        model_reg = GradientBoostingRegressor(n_estimators=100, random_state=42)
-    else:
-        model_class = LogisticRegression(max_iter=1000)
-        model_reg = LinearRegression()
-        
-    model_class.fit(X, y_class)
-    model_reg.fit(X, y_reg)
-
-    # --- PREDICCIONES 2026 ---
-    st.subheader("📊 Predicción Oficial Parrilla 2026")
+    st.sidebar.markdown("---")
+    st.sidebar.header("⚙️ Configuración de Visualización")
+    modelo_seleccionado = st.sidebar.radio("Selecciona el modelo a visualizar:", 
+                                         ["Random Forest", "Gradient Boosting", "Lineal / Logística"])
     
-    # Usamos el calendario oficial para el dropdown
-    selected_circuit = st.selectbox("Selecciona la próxima carrera (Calendario 2026)", CALENDARIO_2026)
+    selected_circuit = st.sidebar.selectbox("Próxima carrera", CALENDARIO_2026)
     c_id = le_circuit.transform([selected_circuit])[0]
+
+    # --- GENERAR PREDICCIONES SEGÚN EL MODELO SELECCIONADO ---
+    st.subheader(f"📊 Predicción Parrilla 2026 - {selected_circuit}")
+    st.markdown(f"**Modelo activo:** {modelo_seleccionado}")
     
     predictions = []
     
@@ -164,25 +163,61 @@ if not df_base.empty:
         historial_piloto = df[df['pilot'] == pilot_abbr]['grid']
         avg_grid = historial_piloto.mean() if not historial_piloto.empty else 15.0
         
-        prob = model_class.predict_proba([[avg_grid, p_id, c_id, 2026]])[0][1]
-        
-        pos_pred = model_reg.predict([[avg_grid, p_id, c_id, 2026]])[0]
-        pos_pred = max(1, min(20, round(pos_pred))) 
+        # Usar el modelo seleccionado
+        prob = modelos_class[modelo_seleccionado].predict_proba([[avg_grid, p_id, c_id, 2026]])[0][1]
+        pos_pred = modelos_reg[modelo_seleccionado].predict([[avg_grid, p_id, c_id, 2026]])[0]
         
         nombre_display = f"{info['nombre']} 🔰" if pilot_abbr in rookies_list else info['nombre']
         
         predictions.append({
             "Piloto": nombre_display, 
-            "Equipo": info['equipo'],
-            "Posición Salida Prom.": round(avg_grid, 1), 
-            "Posición Final Prevista": int(pos_pred),
+            "Posición Final Prevista": pos_pred, # Lo mantenemos como float temporalmente para el ordenamiento
             "Prob. Podio (%)": round(prob * 100, 2)
         })
 
+    # --- ORDENAMIENTO ESTRICTO Y VISUALIZACIÓN ---
+    # Ordenamos por la predicción cruda (float) para desempatar y luego por probabilidad
     df_preds = pd.DataFrame(predictions).sort_values(by=["Posición Final Prevista", "Prob. Podio (%)"], ascending=[True, False])
-    df_preds.index = np.arange(1, len(df_preds) + 1) 
     
-    st.dataframe(df_preds, use_container_width=True)
+    # Asignamos posiciones del 1 al 22 estrictamente (índice)
+    df_preds.index = np.arange(1, len(df_preds) + 1)
+    
+    # Ahora que ya está ordenado, redondeamos visualmente la "Posición Final Prevista" a entero y limitamos a 22
+    df_preds['Posición Final Prevista'] = df_preds.index
+    
+    # Mostramos la tabla limpia
+    st.dataframe(df_preds[['Piloto', 'Posición Final Prevista', 'Prob. Podio (%)']], use_container_width=True)
+
+    # --- GRÁFICO DE IMPORTANCIA DE VARIABLES ---
+    st.markdown("---")
+    st.subheader(f"🔍 ¿Qué miró el modelo '{modelo_seleccionado}' para decidir?")
+    
+    # Obtener importancias dependiendo del tipo de modelo (usamos el regresor para el análisis general)
+    modelo_actual = modelos_reg[modelo_seleccionado]
+    
+    if modelo_seleccionado in ["Random Forest", "Gradient Boosting"]:
+        importances = modelo_actual.feature_importances_
+    else: # Regresión Lineal
+        # Tomamos el valor absoluto de los coeficientes para ver su impacto total
+        importances = np.abs(modelo_actual.coef_)
+        # Normalizamos para que sume 100% y sea comparable visualmente
+        importances = importances / np.sum(importances)
+
+    # Crear el gráfico
+    fig, ax = plt.subplots(figsize=(8, 4))
+    variables = ['Posición de Salida (Grid)', 'Piloto', 'Circuito', 'Año']
+    
+    # Colores F1
+    colors = ['#FF1801' if val == max(importances) else '#808080' for val in importances]
+    
+    ax.barh(variables, importances, color=colors)
+    ax.set_xlabel("Impacto en la predicción")
+    ax.set_title(f"Peso de las variables en {modelo_seleccionado}")
+    
+    # Invertir eje Y para que la más importante salga arriba
+    ax.invert_yaxis() 
+    
+    st.pyplot(fig)
 
     df.to_csv(ANALYZED_DATA_FILE, index=False)
 
