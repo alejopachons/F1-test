@@ -14,16 +14,44 @@ st.title("🏎️ F1 Podium & Position Predictor: Era 2022-2026")
 BASE_DATA_FILE = "f1_dataset_2022_2025.csv"
 ANALYZED_DATA_FILE = "f1_analyzed_data.csv"
 
-# --- LISTADO OFICIAL 2026 ---
-# Mapeo de abreviaturas oficiales de F1 (3 letras) a los nombres que proporcionaste
+# --- 1. ALINEACIÓN OFICIAL 2026 ---
+# Mapeo de abreviatura oficial -> Nombre del piloto y su Equipo
 PILOTOS_2026 = {
-    'ALB': 'Albon', 'ALO': 'Alonso', 'ANT': 'Antonelli', 'BEA': 'Bearman',
-    'BOR': 'Bortoleto', 'BOT': 'Bottas', 'COL': 'Colapinto', 'GAS': 'Gasly',
-    'HAD': 'Hadjar', 'HAM': 'Hamilton', 'HUL': 'Hülkenberg', 'LAW': 'Lawson',
-    'LEC': 'Leclerc', 'LIN': 'Lindblad', 'NOR': 'Norris', 'OCO': 'Ocon',
-    'PER': 'Perez', 'PIA': 'Piastri', 'RUS': 'Russell', 'SAI': 'Sainz',
-    'STR': 'Stroll', 'VER': 'Verstappen'
+    'GAS': {'nombre': 'Gasly', 'equipo': 'Alpine'},
+    'COL': {'nombre': 'Colapinto', 'equipo': 'Alpine'},
+    'ALO': {'nombre': 'Alonso', 'equipo': 'Aston Martin'},
+    'STR': {'nombre': 'Stroll', 'equipo': 'Aston Martin'},
+    'ALB': {'nombre': 'Albon', 'equipo': 'Williams'},
+    'SAI': {'nombre': 'Sainz', 'equipo': 'Williams'},
+    'BOR': {'nombre': 'Bortoleto', 'equipo': 'Audi'},
+    'HUL': {'nombre': 'Hülkenberg', 'equipo': 'Audi'},
+    'PER': {'nombre': 'Pérez', 'equipo': 'Cadillac'},
+    'BOT': {'nombre': 'Bottas', 'equipo': 'Cadillac'},
+    'LEC': {'nombre': 'Leclerc', 'equipo': 'Ferrari'},
+    'HAM': {'nombre': 'Hamilton', 'equipo': 'Ferrari'},
+    'OCO': {'nombre': 'Ocon', 'equipo': 'Haas'},
+    'BEA': {'nombre': 'Bearman', 'equipo': 'Haas'},
+    'NOR': {'nombre': 'Norris', 'equipo': 'McLaren'},
+    'PIA': {'nombre': 'Piastri', 'equipo': 'McLaren'},
+    'ANT': {'nombre': 'Antonelli', 'equipo': 'Mercedes'},
+    'RUS': {'nombre': 'Russell', 'equipo': 'Mercedes'},
+    'LAW': {'nombre': 'Lawson', 'equipo': 'Racing Bulls'},
+    'LIN': {'nombre': 'Lindblad', 'equipo': 'Racing Bulls'},
+    'VER': {'nombre': 'Verstappen', 'equipo': 'Red Bull'},
+    'HAD': {'nombre': 'Hadjar', 'equipo': 'Red Bull'}
 }
+
+# --- 2. CALENDARIO OFICIAL 2026 ---
+CALENDARIO_2026 = [
+    "Albert Park Circuit", "Shanghai International Circuit", "Suzuka Circuit",
+    "Bahrain International Circuit", "Jeddah Corniche Circuit", "Miami International Autodrome",
+    "Circuit Gilles Villeneuve", "Circuit de Monaco", "Circuit de Barcelona-Catalunya",
+    "Red Bull Ring", "Silverstone Circuit", "Circuit de Spa-Francorchamps",
+    "Hungaroring", "Circuit Zandvoort", "Monza Circuit", "Madring", 
+    "Baku City Circuit", "Marina Bay Street Circuit", "Circuit of the Americas",
+    "Autódromo Hermanos Rodríguez", "Interlagos Circuit", "Las Vegas Strip Circuit",
+    "Lusail International Circuit", "Yas Marina Circuit"
+]
 
 @st.cache_data
 def load_base_data():
@@ -36,6 +64,7 @@ def load_base_data():
 @st.cache_data
 def fetch_2026_data():
     all_results = []
+    # Busca dinámicamente las carreras de 2026
     for round_num in range(1, 25): 
         try:
             session = fastf1.get_session(2026, round_num, 'R')
@@ -62,37 +91,36 @@ if not df_base.empty:
         df = df_base.copy()
 
     df = df.dropna(subset=['finish', 'grid'])
-    # Convertimos finish a numérico para el regresor
     df['finish'] = pd.to_numeric(df['finish'], errors='coerce')
     df = df.dropna(subset=['finish'])
-    
     df['is_podium'] = df['finish'].apply(lambda x: 1 if x <= 3 else 0)
     
-    # --- LÓGICA DE ROOKIES ---
+    # --- IDENTIFICACIÓN DE ROOKIES ---
     pilotos_base = df_base['pilot'].unique() if not df_base.empty else []
-    # Usamos las keys (abreviaturas) de tu lista
     rookies_list = [p for p in PILOTOS_2026.keys() if p not in pilotos_base]
 
-    # --- ENCODERS (Asegurando que todos los de 2026 existan) ---
+    # --- ENCODERS ---
     le_pilot = LabelEncoder()
     le_circuit = LabelEncoder()
     
-    # Inyectamos todos los pilotos 2026 al encoder para que no falle con los rookies sin datos
     todos_los_pilotos = pd.concat([df['pilot'], pd.Series(list(PILOTOS_2026.keys()))]).unique()
     le_pilot.fit(todos_los_pilotos)
     
+    # Aseguramos que el nuevo circuito "Madring" esté en el encoder aunque no haya historial
+    todos_los_circuitos = pd.concat([df['circuit'], pd.Series(CALENDARIO_2026)]).unique()
+    le_circuit.fit(todos_los_circuitos)
+    
     df['pilot_id'] = le_pilot.transform(df['pilot'].astype(str))
-    df['circuit_id'] = le_circuit.fit_transform(df['circuit'].astype(str))
+    df['circuit_id'] = le_circuit.transform(df['circuit'].astype(str))
     
     X = df[['grid', 'pilot_id', 'circuit_id', 'year']]
-    y_class = df['is_podium'] # Para probabilidad de podio
-    y_reg = df['finish']      # Para predecir posición final
+    y_class = df['is_podium'] 
+    y_reg = df['finish']      
 
-    # --- CONFIGURACIÓN EN SIDEBAR ---
+    # --- SIDEBAR: CONFIGURACIÓN Y ESTATUS ---
     st.sidebar.header("⚙️ Configuración del Modelo")
     model_choice = st.sidebar.selectbox("Elige el modelo estadístico", ["Random Forest", "Gradient Boosting", "Lineal / Logística"])
     
-    # --- INDICADOR DE DATOS ACTUALIZADOS ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("📅 Última actualización")
     if not df_2026.empty:
@@ -100,10 +128,14 @@ if not df_base.empty:
         st.sidebar.success(f"**Datos al día.**\n\nÚltima carrera procesada:\n🏁 {last_race} (2026)")
     else:
         last_year = df_base['year'].max()
-        last_race = df_base[df_base['year'] == last_year].iloc[-1]['circuit']
-        st.sidebar.warning(f"**Esperando inicio 2026.**\n\nÚltima carrera en base:\n🏁 {last_race} ({last_year})")
+        # Manejo de error en caso de que el max year de la base no coincida
+        try:
+            last_race = df_base[df_base['year'] == last_year].iloc[-1]['circuit']
+        except IndexError:
+            last_race = "Desconocida"
+        st.sidebar.info(f"**Esperando inicio 2026.**\n\nEl GP de Australia aún no se corre o no hay datos cargados.\n\nÚltima carrera en base:\n🏁 {last_race} ({last_year})")
 
-    # --- ENTRENAMIENTO DE DOS MODELOS (Clasificador y Regresor) ---
+    # --- ENTRENAMIENTO ---
     if model_choice == "Random Forest":
         model_class = RandomForestClassifier(n_estimators=100, random_state=42)
         model_reg = RandomForestRegressor(n_estimators=100, random_state=42)
@@ -119,44 +151,39 @@ if not df_base.empty:
 
     # --- PREDICCIONES 2026 ---
     st.subheader("📊 Predicción Oficial Parrilla 2026")
-    selected_circuit = st.selectbox("Selecciona el Circuito a simular", df['circuit'].unique())
+    
+    # Usamos el calendario oficial para el dropdown
+    selected_circuit = st.selectbox("Selecciona la próxima carrera (Calendario 2026)", CALENDARIO_2026)
     c_id = le_circuit.transform([selected_circuit])[0]
     
     predictions = []
     
-    # Iteramos sobre TU lista oficial de 2026
-    for pilot_abbr, pilot_name in PILOTOS_2026.items():
+    for pilot_abbr, info in PILOTOS_2026.items():
         p_id = le_pilot.transform([pilot_abbr])[0]
         
-        # Calcular grid promedio (Si es rookie, asumimos posición 15 para empezar)
         historial_piloto = df[df['pilot'] == pilot_abbr]['grid']
         avg_grid = historial_piloto.mean() if not historial_piloto.empty else 15.0
         
-        # Predicción de Probabilidad de Podio
         prob = model_class.predict_proba([[avg_grid, p_id, c_id, 2026]])[0][1]
         
-        # Predicción de Posición Final
         pos_pred = model_reg.predict([[avg_grid, p_id, c_id, 2026]])[0]
-        # Limitamos la predicción entre el puesto 1 y el 20
         pos_pred = max(1, min(20, round(pos_pred))) 
         
-        nombre_display = f"{pilot_name} [Rookie 🔰]" if pilot_abbr in rookies_list else pilot_name
+        nombre_display = f"{info['nombre']} 🔰" if pilot_abbr in rookies_list else info['nombre']
         
         predictions.append({
             "Piloto": nombre_display, 
+            "Equipo": info['equipo'],
             "Posición Salida Prom.": round(avg_grid, 1), 
             "Posición Final Prevista": int(pos_pred),
-            "Probabilidad de Podio (%)": round(prob * 100, 2)
+            "Prob. Podio (%)": round(prob * 100, 2)
         })
 
-    # Mostramos la tabla ordenada por la posición final prevista (del 1ro al último)
-    df_preds = pd.DataFrame(predictions).sort_values(by=["Posición Final Prevista", "Probabilidad de Podio (%)"], ascending=[True, False])
-    # Reseteamos el índice para que parezca la posición del campeonato
+    df_preds = pd.DataFrame(predictions).sort_values(by=["Posición Final Prevista", "Prob. Podio (%)"], ascending=[True, False])
     df_preds.index = np.arange(1, len(df_preds) + 1) 
     
     st.dataframe(df_preds, use_container_width=True)
 
-    # Guardado silencioso del CSV
     df.to_csv(ANALYZED_DATA_FILE, index=False)
 
 st.markdown("---")
