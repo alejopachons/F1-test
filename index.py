@@ -9,12 +9,11 @@ from sklearn.preprocessing import LabelEncoder
 import numpy as np
 
 st.set_page_config(page_title="F1 2026 Predictor", layout="wide")
-st.title("🏎️ F1 Podium & Position Predictor: 2026")
+st.title("🏎️ F1 Podium & Position Predictor: Era 2022-2026")
 
 BASE_DATA_FILE = "f1_dataset_2022_2025.csv"
 ANALYZED_DATA_FILE = "f1_analyzed_data.csv"
 
-# --- 1. ALINEACIÓN OFICIAL 2026 ---
 PILOTOS_2026 = {
     'GAS': {'nombre': 'Gasly', 'equipo': 'Alpine'},
     'COL': {'nombre': 'Colapinto', 'equipo': 'Alpine'},
@@ -40,7 +39,6 @@ PILOTOS_2026 = {
     'HAD': {'nombre': 'Hadjar', 'equipo': 'Red Bull'}
 }
 
-# --- 2. CALENDARIO OFICIAL 2026 ---
 CALENDARIO_2026 = [
     "Albert Park Circuit", "Shanghai International Circuit", "Suzuka Circuit",
     "Bahrain International Circuit", "Jeddah Corniche Circuit", "Miami International Autodrome",
@@ -134,7 +132,8 @@ if not df_base.empty:
     df['pilot_id'] = le_pilot.transform(df['pilot'].astype(str))
     df['circuit_id'] = le_circuit.transform(df['circuit'].astype(str))
     
-    X = df[['grid', 'pilot_id', 'circuit_id', 'year', 'pit_stops', 'max_speed', 'red_flags']]
+    columnas_modelo = ['grid', 'pilot_id', 'circuit_id', 'year', 'pit_stops', 'max_speed', 'red_flags']
+    X = df[columnas_modelo]
     y_class = df['is_podium'] 
     y_reg = df['finish']      
 
@@ -190,9 +189,13 @@ if not df_base.empty:
                 avg_speed = historial_piloto['max_speed'].mean() if not historial_piloto.empty else 300.0
                 avg_red = historial_piloto['red_flags'].mean() if not historial_piloto.empty else 0.0
                 
-                features = [[avg_grid, p_id, c_id, 2026, avg_pit, avg_speed, avg_red]]
-                prob = modelos_class[modelo_nombre].predict_proba(features)[0][1]
-                pos_pred = modelos_reg[modelo_nombre].predict(features)[0]
+                features_df = pd.DataFrame(
+                    [[avg_grid, p_id, c_id, 2026, avg_pit, avg_speed, avg_red]], 
+                    columns=columnas_modelo
+                )
+                
+                prob = modelos_class[modelo_nombre].predict_proba(features_df)[0][1]
+                pos_pred = modelos_reg[modelo_nombre].predict(features_df)[0]
                 
                 nombre_display = f"{info['nombre']} 🔰" if pilot_abbr in rookies_list else info['nombre']
                 
@@ -206,7 +209,7 @@ if not df_base.empty:
             df_preds.index = np.arange(1, len(df_preds) + 1)
             df_preds['Puesto'] = df_preds.index
             
-            st.dataframe(df_preds[['Puesto', 'Piloto', 'Prob. Podio (%)']], use_container_width=True, hide_index=True)
+            st.dataframe(df_preds[['Puesto', 'Piloto', 'Prob. Podio (%)']], width='stretch', hide_index=True)
 
             st.markdown("---")
             modelo_actual = modelos_reg[modelo_nombre]
@@ -236,7 +239,7 @@ if not df_base.empty:
 
     st.markdown("---")
     st.subheader("🗂️ Dataset utilizado para el entrenamiento")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
 
     st.markdown("---")
     st.subheader("📥 Exportar y Actualizar Datos")
