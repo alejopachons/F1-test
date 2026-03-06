@@ -9,7 +9,7 @@ from sklearn.preprocessing import LabelEncoder
 import numpy as np
 
 st.set_page_config(page_title="F1 2026 Predictor", layout="wide")
-st.title("🏎️ F1 Podium & Position Predictor: Era 2022-2026")
+st.title("🏎️ F1 Podium & Position Predictor: 2026")
 
 BASE_DATA_FILE = "f1_dataset_2022_2025.csv"
 ANALYZED_DATA_FILE = "f1_analyzed_data.csv"
